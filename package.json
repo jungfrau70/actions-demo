@@ -3,15 +3,18 @@
     "version": "1.0.0",
     "description": "GitHub Actions Demo Project",
     "main": "app.js",
-    "scripts": {
-      "start": "node app.js",
-      "test": "jest",
-      "build": "echo 'Building application...'",
-      "lint": "eslint ."
-    },
-    "dependencies": {
-      "express": "^4.18.2"
-    },
+  "scripts": {
+    "start": "node app.js",
+    "test": "jest",
+    "build": "echo 'Building application...'",
+    "lint": "eslint .",
+    "docker:build": "docker build -t actions-demo .",
+    "docker:run": "docker run -p 3000:3000 actions-demo",
+    "docker:run:prod": "docker run -d -p 80:3000 --name actions-demo-prod actions-demo"
+  },
+  "dependencies": {
+    "express": "^4.18.2"
+  },
     "devDependencies": {
       "jest": "^29.5.0",
       "eslint": "^8.40.0",

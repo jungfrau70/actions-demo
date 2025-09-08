@@ -6,6 +6,11 @@ on:
     branches: [ main ]
     tags: [ 'v*' ]
 
+# 환경 변수 설정
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
 # 환경별 배포 설정
 jobs:
   deploy:
@@ -32,17 +37,61 @@ jobs:
       - name: Build application
         run: npm run build
       
+      # Docker 이미지 빌드 및 푸시
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=sha,prefix={{branch}}-
+      
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      
+      # Staging 환경 배포
       - name: Deploy to staging
         if: github.ref == 'refs/heads/main'
         run: |
           echo "Deploying to staging environment..."
           echo "Application version: ${{ github.sha }}"
+          echo "Docker image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}"
+          
+          # 실제 배포 시에는 다음과 같은 명령어를 사용:
+          # docker run -d -p 3000:3000 --name actions-demo-staging ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          # 또는 Kubernetes, Docker Compose, 클라우드 서비스 사용
       
+      # Production 환경 배포
       - name: Deploy to production
         if: startsWith(github.ref, 'refs/tags/v')
         run: |
           echo "Deploying to production environment..."
           echo "Release version: ${{ github.ref_name }}"
+          echo "Docker image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }}"
+          
+          # 실제 배포 시에는 다음과 같은 명령어를 사용:
+          # docker run -d -p 80:3000 --name actions-demo-prod ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }}
+          # 또는 Kubernetes, Docker Compose, 클라우드 서비스 사용
       
       - name: Notify deployment
         uses: 8398a7/action-slack@v3
