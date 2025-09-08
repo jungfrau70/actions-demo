@@ -10,6 +10,9 @@ on:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
+  # Docker Hub를 사용하려면 아래 주석을 해제하고 위의 REGISTRY를 docker.io로 변경
+  # REGISTRY: docker.io
+  # IMAGE_NAME: ${{ github.actor }}/actions-demo
 
 # 환경별 배포 설정
 jobs:
@@ -47,6 +50,7 @@ jobs:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+        continue-on-error: true
       
       - name: Extract metadata
         id: meta
@@ -63,11 +67,12 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: .
-          push: true
+          push: ${{ secrets.GITHUB_TOKEN != '' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+        continue-on-error: true
       
       # Staging 환경 배포
       - name: Deploy to staging
@@ -98,5 +103,5 @@ jobs:
         with:
           status: ${{ job.status }}
           channel: '#deployments'
-          webhook_url: ${{ secrets.SLACK_WEBHOOK }}
-        if: always()
+          webhook_url: ${{ secrets.SLACK_WEBHOOK_URL }}
+        if: always() && secrets.SLACK_WEBHOOK_URL
