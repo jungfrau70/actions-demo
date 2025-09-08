@@ -8,11 +8,13 @@ on:
 
 # 환경 변수 설정
 env:
-  REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
-  # Docker Hub를 사용하려면 아래 주석을 해제하고 위의 REGISTRY를 docker.io로 변경
-  # REGISTRY: docker.io
-  # IMAGE_NAME: ${{ github.actor }}/actions-demo
+  # GitHub Container Registry (권한 필요)
+  # REGISTRY: ghcr.io
+  # IMAGE_NAME: ${{ github.repository }}
+  
+  # Docker Hub (권한 문제 없음)
+  REGISTRY: docker.io
+  IMAGE_NAME: ${{ github.actor }}/actions-demo
 
 # 환경별 배포 설정
 jobs:
@@ -49,7 +51,7 @@ jobs:
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
         continue-on-error: true
       
       - name: Extract metadata
@@ -98,10 +100,20 @@ jobs:
           # docker run -d -p 80:3000 --name actions-demo-prod ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }}
           # 또는 Kubernetes, Docker Compose, 클라우드 서비스 사용
       
+      - name: Check Slack webhook
+        id: check-slack
+        run: |
+          if [ -n "${{ secrets.SLACK_WEBHOOK_URL }}" ]; then
+            echo "slack_enabled=true" >> $GITHUB_OUTPUT
+          else
+            echo "slack_enabled=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: Notify deployment
         uses: 8398a7/action-slack@v3
         with:
           status: ${{ job.status }}
           channel: '#deployments'
           webhook_url: ${{ secrets.SLACK_WEBHOOK_URL }}
-        if: always() && secrets.SLACK_WEBHOOK_URL
+        if: always() && steps.check-slack.outputs.slack_enabled == 'true'
+        continue-on-error: true
