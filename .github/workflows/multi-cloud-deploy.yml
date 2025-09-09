@@ -1,0 +1,321 @@
+name: Multi-Cloud Deployment (AWS + GCP)
+
+# main 브랜치에 푸시될 때만 실행
+on:
+  push:
+    branches: [ main ]
+    tags: [ 'v*' ]
+
+# 환경 변수 설정
+env:
+  REGISTRY: docker.io
+  IMAGE_NAME: ${{ github.actor }}/actions-demo
+  AWS_REGION: ap-northeast-2
+  GCP_REGION: asia-northeast1
+
+jobs:
+  # Docker 이미지 빌드 및 푸시
+  build:
+    name: Build and Push Docker Image
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ github.actor }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+        continue-on-error: true
+      
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=sha,prefix={{branch}}-
+      
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: ${{ secrets.DOCKERHUB_TOKEN != '' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+        continue-on-error: true
+
+  # AWS ECS 배포
+  deploy-aws:
+    name: Deploy to AWS ECS
+    runs-on: ubuntu-latest
+    needs: build
+    if: github.ref == 'refs/heads/main'
+    environment: aws-production
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+        continue-on-error: true
+      
+      - name: Build, tag, and push image to Amazon ECR
+        id: build-image
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          ECR_REPOSITORY: actions-demo
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          # ECR에 이미지 푸시 (선택사항)
+          if [ "${{ steps.login-ecr.outcome }}" == "success" ]; then
+            docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
+            docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+            echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
+          else
+            echo "ECR login failed, using Docker Hub image"
+            echo "image=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: Update ECS task definition
+        id: task-def
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          ECR_REPOSITORY: actions-demo
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          # 태스크 정의 업데이트
+          if [ "${{ steps.login-ecr.outcome }}" == "success" ]; then
+            IMAGE_URI="$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+          else
+            IMAGE_URI="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}"
+          fi
+          
+          # 기존 태스크 정의 가져오기
+          aws ecs describe-task-definition \
+            --task-definition ${{ secrets.AWS_ECS_TASK_DEFINITION }} \
+            --query taskDefinition > task-definition.json
+          
+          # 이미지 URI 업데이트
+          jq --arg IMAGE "$IMAGE_URI" '.containerDefinitions[0].image = $IMAGE' task-definition.json > updated-task-definition.json
+          
+          # 불필요한 필드 제거
+          jq 'del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .placementConstraints, .compatibilities, .registeredAt, .registeredBy)' updated-task-definition.json > final-task-definition.json
+          
+          # 새 태스크 정의 등록
+          NEW_TASK_DEF=$(aws ecs register-task-definition \
+            --cli-input-json file://final-task-definition.json \
+            --query 'taskDefinition.taskDefinitionArn' \
+            --output text)
+          
+          echo "new-task-definition=$NEW_TASK_DEF" >> $GITHUB_OUTPUT
+          echo "Updated task definition: $NEW_TASK_DEF"
+      
+      - name: Deploy to ECS
+        run: |
+          # ECS 서비스 업데이트
+          aws ecs update-service \
+            --cluster ${{ secrets.AWS_ECS_CLUSTER }} \
+            --service ${{ secrets.AWS_ECS_SERVICE }} \
+            --task-definition ${{ steps.task-def.outputs.new-task-definition }} \
+            --force-new-deployment
+          
+          echo "AWS ECS deployment initiated"
+          echo "Service: ${{ secrets.AWS_ECS_SERVICE }}"
+          echo "Cluster: ${{ secrets.AWS_ECS_CLUSTER }}"
+          echo "Task Definition: ${{ steps.task-def.outputs.new-task-definition }}"
+      
+      - name: Wait for AWS deployment to complete
+        run: |
+          echo "Waiting for AWS ECS deployment to complete..."
+          aws ecs wait services-stable \
+            --cluster ${{ secrets.AWS_ECS_CLUSTER }} \
+            --services ${{ secrets.AWS_ECS_SERVICE }}
+          
+          echo "AWS ECS deployment completed successfully!"
+      
+      - name: Get AWS service information
+        run: |
+          # AWS 서비스 정보 출력
+          aws ecs describe-services \
+            --cluster ${{ secrets.AWS_ECS_CLUSTER }} \
+            --services ${{ secrets.AWS_ECS_SERVICE }} \
+            --query 'services[0].{ServiceName:serviceName,Status:status,RunningCount:runningCount,DesiredCount:desiredCount,TaskDefinition:taskDefinition}' \
+            --output table
+
+  # GCP Cloud Run 배포
+  deploy-gcp:
+    name: Deploy to GCP Cloud Run
+    runs-on: ubuntu-latest
+    needs: build
+    if: github.ref == 'refs/heads/main'
+    environment: gcp-production
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+      
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          version: 'latest'
+      
+      - name: Configure Docker to use gcloud as a credential helper
+        run: |
+          gcloud auth configure-docker
+      
+      - name: Build and push to Google Container Registry
+        id: build-gcr
+        env:
+          GCR_REGISTRY: gcr.io
+          GCR_REPOSITORY: ${{ secrets.GCP_PROJECT_ID }}/actions-demo
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          # GCR에 이미지 빌드 및 푸시
+          docker build -t $GCR_REGISTRY/$GCR_REPOSITORY:$IMAGE_TAG .
+          docker push $GCR_REGISTRY/$GCR_REPOSITORY:$IMAGE_TAG
+          echo "image=$GCR_REGISTRY/$GCR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
+          echo "Built and pushed to GCR: $GCR_REGISTRY/$GCR_REPOSITORY:$IMAGE_TAG"
+      
+      - name: Deploy to Cloud Run
+        id: deploy-cloudrun
+        run: |
+          # Cloud Run에 배포
+          SERVICE_URL=$(gcloud run deploy ${{ secrets.GCP_SERVICE_NAME }} \
+            --image ${{ steps.build-gcr.outputs.image }} \
+            --region ${{ env.GCP_REGION }} \
+            --platform managed \
+            --allow-unauthenticated \
+            --port 3000 \
+            --memory 512Mi \
+            --cpu 1 \
+            --min-instances 0 \
+            --max-instances 10 \
+            --timeout 300 \
+            --concurrency 80 \
+            --format "value(status.url)")
+          
+          echo "service-url=$SERVICE_URL" >> $GITHUB_OUTPUT
+          echo "Deployed to Cloud Run: $SERVICE_URL"
+      
+      - name: Wait for GCP deployment to complete
+        run: |
+          echo "Waiting for GCP Cloud Run deployment to complete..."
+          # Cloud Run 배포 완료 대기
+          gcloud run services describe ${{ secrets.GCP_SERVICE_NAME }} \
+            --region ${{ env.GCP_REGION }} \
+            --format "value(status.conditions[0].status)"
+          
+          echo "GCP Cloud Run deployment completed successfully!"
+      
+      - name: Get GCP service information
+        run: |
+          # GCP 서비스 정보 출력
+          gcloud run services describe ${{ secrets.GCP_SERVICE_NAME }} \
+            --region ${{ env.GCP_REGION }} \
+            --format "table(metadata.name,status.url,status.conditions[0].status,spec.template.spec.containers[0].image)"
+
+  # 배포 상태 확인 및 헬스체크
+  health-check:
+    name: Health Check and Status
+    runs-on: ubuntu-latest
+    needs: [deploy-aws, deploy-gcp]
+    if: always()
+    
+    steps:
+      - name: Check AWS ECS Health
+        if: needs.deploy-aws.result == 'success'
+        run: |
+          echo "✅ AWS ECS deployment successful"
+          echo "Service: ${{ secrets.AWS_ECS_SERVICE }}"
+          echo "Cluster: ${{ secrets.AWS_ECS_CLUSTER }}"
+          # 실제 헬스체크 로직 추가 가능
+          # curl -f http://your-aws-alb-endpoint/health || exit 1
+      
+      - name: Check GCP Cloud Run Health
+        if: needs.deploy-gcp.result == 'success'
+        run: |
+          echo "✅ GCP Cloud Run deployment successful"
+          echo "Service: ${{ secrets.GCP_SERVICE_NAME }}"
+          echo "Region: ${{ env.GCP_REGION }}"
+          # 실제 헬스체크 로직 추가 가능
+          # curl -f http://your-gcp-cloudrun-endpoint/health || exit 1
+      
+      - name: Deployment Summary
+        run: |
+          echo "=== 🚀 Multi-Cloud Deployment Summary ==="
+          echo "Docker Image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}"
+          echo "AWS ECS Status: ${{ needs.deploy-aws.result }}"
+          echo "GCP Cloud Run Status: ${{ needs.deploy-gcp.result }}"
+          echo "Deployment Time: $(date)"
+          
+          if [ "${{ needs.deploy-aws.result }}" == "success" ] && [ "${{ needs.deploy-gcp.result }}" == "success" ]; then
+            echo "🎉 All deployments completed successfully!"
+          else
+            echo "⚠️ Some deployments failed. Check the logs above."
+          fi
+      
+      - name: Check Slack webhook
+        id: check-slack
+        run: |
+          if [ -n "${{ secrets.SLACK_WEBHOOK_URL }}" ]; then
+            echo "slack_enabled=true" >> $GITHUB_OUTPUT
+          else
+            echo "slack_enabled=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Notify deployment status
+        uses: 8398a7/action-slack@v3
+        with:
+          status: ${{ job.status }}
+          channel: '#deployments'
+          webhook_url: ${{ secrets.SLACK_WEBHOOK_URL }}
+          fields: |
+            [
+              {
+                "title": "Multi-Cloud Deployment",
+                "value": "AWS ECS + GCP Cloud Run",
+                "short": false
+              },
+              {
+                "title": "AWS ECS Status",
+                "value": "${{ needs.deploy-aws.result }}",
+                "short": true
+              },
+              {
+                "title": "GCP Cloud Run Status",
+                "value": "${{ needs.deploy-gcp.result }}",
+                "short": true
+              },
+              {
+                "title": "Docker Image",
+                "value": "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}",
+                "short": false
+              }
+            ]
+        if: always() && steps.check-slack.outputs.slack_enabled == 'true'
+        continue-on-error: true
