@@ -150,6 +150,7 @@ Error: failed to push to registry
 - `.github/workflows/` 디렉토리에 있는지 확인
 - YAML 문법 오류가 없는지 확인
 
+
 #### 3. 테스트 실패
 ```
 Jest did not exit one second after the test run has completed
