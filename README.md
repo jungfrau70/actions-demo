@@ -26,6 +26,7 @@ git clone https://github.com/YOUR_USERNAME/actions-demo.git
 cd actions-demo
 ```
 
+
 ### 2단계: Docker Hub 토큰 설정 (권장)
 **📖 상세 가이드**: [Docker Hub 가입 및 토큰 설정 가이드](../docker-hub-setup-guide.md)
 
