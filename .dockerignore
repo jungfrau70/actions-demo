@@ -9,3 +9,7 @@ coverage
 .github
 tests
 .eslintrc.js
+jest.config.js
+test-results
+*.md
+.DS_Store

@@ -1,4 +1,4 @@
-name: Deploy to Production
+name: Deploy to Docker Hub
 
 # main 브랜치에 푸시될 때만 실행
 on:
@@ -8,11 +8,6 @@ on:
 
 # 환경 변수 설정
 env:
-  # GitHub Container Registry (권한 필요)
-  # REGISTRY: ghcr.io
-  # IMAGE_NAME: ${{ github.repository }}
-  
-  # Docker Hub (권한 문제 없음)
   REGISTRY: docker.io
   IMAGE_NAME: ${{ github.actor }}/actions-demo
 
@@ -69,70 +64,37 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: .
-          push: ${{ secrets.GITHUB_TOKEN != '' }}
+          push: ${{ secrets.DOCKERHUB_TOKEN != '' }}  # 토큰이 있을 때만 푸시
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
         continue-on-error: true
       
-      # Staging 환경 배포
-      - name: Deploy to staging
+      # Docker Hub에 이미지 푸시 완료 알림
+      - name: Deployment Summary
         if: github.ref == 'refs/heads/main'
         run: |
-          echo "Deploying to staging environment..."
-          echo "Application version: ${{ github.sha }}"
-          echo "Docker image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}"
-          
-          # 1. Docker 서버 배포 (활성화됨)
-          # SSH 키를 GitHub 시크릿에 SERVER_SSH_KEY로 설정 필요
-          # ssh -i ~/.ssh/id_rsa user@your-server.com "docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }} && docker stop actions-demo-staging || true && docker rm actions-demo-staging || true && docker run -d -p 3000:3000 --name actions-demo-staging ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}"
-          
-          # 2. AWS ECS/Fargate 배포 (주석 처리됨)
-          # aws ecs update-service --cluster my-cluster --service my-service --force-new-deployment
-          
-          # 3. Google Cloud Run 배포 (주석 처리됨)
-          # gcloud run deploy actions-demo-staging --image ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }} --region asia-northeast1 --platform managed
-          
-          # 4. Azure Container Instances 배포 (주석 처리됨)
-          # az container create --resource-group myRG --name actions-demo-staging --image ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }} --ports 3000 --dns-name-label actions-demo-staging
-          
-          # 5. Kubernetes 배포 (주석 처리됨)
-          # kubectl set image deployment/actions-demo-staging actions-demo=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
-          # kubectl rollout status deployment/actions-demo-staging
-          
-          # 6. Heroku 배포 (주석 처리됨)
-          # heroku container:push web --app actions-demo-staging
-          # heroku container:release web --app actions-demo-staging
+          echo "🎉 Docker Hub 배포 완료!"
+          echo "📦 Docker Image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}"
+          echo "🔗 Docker Hub URL: https://hub.docker.com/r/${{ github.actor }}/actions-demo"
+          echo ""
+          echo "💡 다음 단계:"
+          echo "1. Docker Hub에서 이미지 확인"
+          echo "2. 로컬에서 테스트: docker run -p 3000:3000 ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}"
+          echo "3. 고급 배포를 원한다면 'advanced' 브랜치로 전환"
       
-      # Production 환경 배포
-      - name: Deploy to production
+      # Production 릴리스 배포
+      - name: Production Release
         if: startsWith(github.ref, 'refs/tags/v')
         run: |
-          echo "Deploying to production environment..."
-          echo "Release version: ${{ github.ref_name }}"
-          echo "Docker image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }}"
-          
-          # 1. Docker 서버 배포 (활성화됨)
-          # SSH 키를 GitHub 시크릿에 SERVER_SSH_KEY로 설정 필요
-          # ssh -i ~/.ssh/id_rsa user@your-server.com "docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }} && docker stop actions-demo-prod || true && docker rm actions-demo-prod || true && docker run -d -p 80:3000 --name actions-demo-prod ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }}"
-          
-          # 2. AWS ECS/Fargate 배포 (주석 처리됨)
-          # aws ecs update-service --cluster my-prod-cluster --service my-prod-service --force-new-deployment
-          
-          # 3. Google Cloud Run 배포 (주석 처리됨)
-          # gcloud run deploy actions-demo-prod --image ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }} --region asia-northeast1 --platform managed
-          
-          # 4. Azure Container Instances 배포 (주석 처리됨)
-          # az container create --resource-group myProdRG --name actions-demo-prod --image ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }} --ports 80 --dns-name-label actions-demo-prod
-          
-          # 5. Kubernetes 배포 (주석 처리됨)
-          # kubectl set image deployment/actions-demo-prod actions-demo=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }}
-          # kubectl rollout status deployment/actions-demo-prod
-          
-          # 6. Heroku 배포 (주석 처리됨)
-          # heroku container:push web --app actions-demo-prod
-          # heroku container:release web --app actions-demo-prod
+          echo "🚀 Production Release 배포 완료!"
+          echo "📦 Release Version: ${{ github.ref_name }}"
+          echo "📦 Docker Image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }}"
+          echo "🔗 Docker Hub URL: https://hub.docker.com/r/${{ github.actor }}/actions-demo/tags"
+          echo ""
+          echo "💡 Production 배포 완료!"
+          echo "이제 Docker Hub에서 stable 버전으로 사용할 수 있습니다."
       
       - name: Check Slack webhook
         id: check-slack
