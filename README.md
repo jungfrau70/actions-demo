@@ -156,6 +156,21 @@ Jest did not exit one second after the test run has completed
 ```
 **해결방법**: 이미 해결됨 (app.js에서 테스트 환경 분리)
 
+#### 4. npm 의존성 충돌 오류
+```
+npm error Invalid: lock file's @types/node@24.3.1 does not satisfy @types/node@20.19.13
+npm error Missing: jest-junit@16.0.0 from lock file
+```
+
+**원인**:
+- `package-lock.json`과 `package.json`의 버전 불일치
+- 의존성 버전 충돌
+
+**해결방법**:
+1. `package-lock.json` 파일 삭제
+2. `npm install` 실행하여 새로 생성
+3. 또는 `npm ci` 대신 `npm install` 사용
+
 ## 📖 추가 자료
 
 - [GitHub Actions 공식 문서](https://docs.github.com/en/actions)
